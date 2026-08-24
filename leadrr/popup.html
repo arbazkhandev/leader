@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Leadrr - Google Maps Lead Generator</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="logo-area">
+        <div class="logo-pulse"></div>
+        <h1>Lead<span>rr</span></h1>
+      </div>
+      <span class="badge version">v1.0</span>
+    </header>
+
+    <!-- Main Card -->
+    <main class="main-card">
+      <!-- Status & Stats Section -->
+      <section class="stats-container">
+        <div class="stat-box">
+          <span class="stat-label">Leads Scraped</span>
+          <span id="leads-count" class="stat-value">0</span>
+        </div>
+        <div class="stat-box">
+          <span class="stat-label">Scraper Status</span>
+          <span id="scraper-status" class="status-badge status-idle">Ready</span>
+        </div>
+      </section>
+
+      <!-- Settings Section -->
+      <section class="settings-panel">
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-name">Scroll Delay</span>
+            <span id="delay-val" class="setting-value">2.5s</span>
+          </div>
+          <input type="range" id="scroll-delay" min="1000" max="6000" step="500" value="2500" class="modern-slider">
+        </div>
+      </section>
+
+      <!-- Control Buttons -->
+      <section class="actions-panel">
+        <button id="btn-start" class="btn btn-primary">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="5 3 19 12 5 21 5 3"></polygon>
+          </svg>
+          Start Scraping
+        </button>
+        <button id="btn-stop" class="btn btn-danger" disabled>
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect>
+          </svg>
+          Stop
+        </button>
+      </section>
+
+      <section class="export-panel">
+        <button id="btn-export" class="btn btn-success" disabled>
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="7 10 12 15 17 10"></polyline>
+            <line x1="12" y1="15" x2="12" y2="3"></line>
+          </svg>
+          Export to Excel (CSV)
+        </button>
+        <button id="btn-clear" class="btn btn-secondary">
+          Clear Data
+        </button>
+      </section>
+
+      <!-- Live Leads Preview -->
+      <section class="preview-panel">
+        <h3>Live Leads Preview</h3>
+        <div class="preview-scroll-container">
+          <ul id="leads-preview-list" class="leads-list">
+            <!-- Dynamically populated -->
+            <li class="empty-state">No leads scraped yet. Search something in Google Maps and click Start.</li>
+          </ul>
+        </div>
+      </section>
+    </main>
+
+    <!-- Footer / Instructions -->
+    <footer class="app-footer">
+      <p class="instruction-text">
+        <strong>How to use:</strong> Open Google Maps, search for a business type (e.g. <i>"Gyms in New York"</i>), then click <strong>Start Scraping</strong>.
+      </p>
+    </footer>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
