@@ -159,6 +159,70 @@ function parseDetails(card, name) {
   return { category, address, phone };
 }
 
+// Score and Tier calculation logic
+function calculateScore(lead, websiteStatus) {
+  let score = 0;
+  let reasons = [];
+
+  // Website logic
+  if (websiteStatus === 'NO_WEBSITE') {
+    score += 40; reasons.push('NO_WEBSITE (40)');
+  } else if (websiteStatus === 'BROKEN_WEBSITE') {
+    score += 35; reasons.push('BROKEN_WEBSITE (35)');
+  } else if (websiteStatus === 'SOCIAL_ONLY') {
+    score += 30; reasons.push('SOCIAL_ONLY (30)');
+  } else if (websiteStatus === 'DIRECTORY_ONLY') {
+    score += 28; reasons.push('DIRECTORY_ONLY (28)');
+  } else if (websiteStatus === 'DOMAIN_ONLY') {
+    score += 20; reasons.push('DOMAIN_ONLY (20)');
+  } else if (websiteStatus === 'VALID_WEBSITE') {
+    score += 0; reasons.push('VALID_WEBSITE (0)');
+  }
+
+  // Phone
+  if (lead.phone) {
+    score += 15; reasons.push('Has phone (+15)');
+  }
+  // Email
+  if (lead.email) {
+    score += 10; reasons.push('Has email (+10)');
+  }
+  
+  // Rating
+  const ratingNum = parseFloat(lead.rating || '0');
+  const reviewsStr = String(lead.reviewsCount || '').replace(/,/g, '').replace('K', '000');
+  const reviewsNum = parseFloat(reviewsStr || '0');
+
+  if (ratingNum >= 4.0 && reviewsNum >= 20) {
+    score += 15; reasons.push('Rating 4.0+ & 20+ reviews (+15)');
+  } else if (ratingNum >= 3.0 && ratingNum <= 3.9 && reviewsNum > 0) {
+    score += 8; reasons.push('Rating 3.0-3.9 with reviews (+8)');
+  }
+
+  // Instagram
+  if (lead.instagram) {
+    score += 5; reasons.push('Has Instagram (+5)');
+  }
+
+  // Category
+  const catLower = (lead.category || '').toLowerCase();
+  if (['restaurant', 'clinic', 'salon', 'gym', 'shop'].some(c => catLower.includes(c))) {
+    score += 10; reasons.push('Category bonus (+10)');
+  }
+
+  let tier = '❄️ LOW';
+  let status = 'VERIFIED'; // Initial status
+  if (score >= 70) {
+    tier = '🔥 HOT';
+    status = 'QUALIFIED';
+  } else if (score >= 45) {
+    tier = '⚡ WARM';
+    status = 'QUALIFIED';
+  }
+
+  return { score, tier, status, qualificationReason: reasons.join(', ') };
+}
+
 // Start Scraper Loop
 async function startScraping(defaultDelay) {
   stopScraping(); // Clean up previous loop if running
@@ -189,21 +253,22 @@ async function startScraping(defaultDelay) {
     const startCount = leads.length;
 
     // Scrape all visible cards
-    const placeLinks = container.querySelectorAll('a[href*="/maps/place/"]');
+    const placeLinks = Array.from(container.querySelectorAll('a[href*="/maps/place/"]'));
     
-    placeLinks.forEach(link => {
+    // We process links sequentially to avoid overwhelming the background fetch
+    for (const link of placeLinks) {
       const href = link.getAttribute('href');
       const fullUrl = href.startsWith('http') ? href : `https://www.google.com${href}`;
 
       // Unique constraint on URL
-      if (leads.some(item => item.link === fullUrl)) return;
+      if (leads.some(item => item.link === fullUrl)) continue;
 
       const card = getCardContainer(link);
       
       // Parse business name
       const nameEl = card.querySelector('div.qBF1Pd') || card.querySelector('div.fontHeadlineSmall') || link;
       const name = nameEl ? nameEl.textContent.trim() : '';
-      if (!name) return;
+      if (!name) continue;
 
       // Parse rating
       let rating = '';
@@ -226,16 +291,88 @@ async function startScraping(defaultDelay) {
       // Parse details
       const { category, address, phone } = parseDetails(card, name);
 
-      leads.push({
+      // Extract Website URL from card
+      let websiteUrl = '';
+      const cardLinks = Array.from(card.querySelectorAll('a'));
+      const webLinkEl = cardLinks.find(a => {
+        const h = a.getAttribute('href') || '';
+        return h.startsWith('http') && !h.includes('google.com/maps') && !h.includes('google.com/search');
+      });
+      if (webLinkEl) {
+        websiteUrl = webLinkEl.getAttribute('href');
+      }
+
+      let email = '';
+      let instagram = '';
+      let websiteStatus = 'NO_WEBSITE';
+
+      if (websiteUrl) {
+        // Evaluate website URL based on domain
+        const urlLower = websiteUrl.toLowerCase();
+        if (urlLower.includes('facebook.com') || urlLower.includes('instagram.com') || urlLower.includes('twitter.com') || urlLower.includes('linkedin.com')) {
+          websiteStatus = 'SOCIAL_ONLY';
+          if (urlLower.includes('instagram.com')) instagram = websiteUrl;
+        } else if (urlLower.includes('yelp.') || urlLower.includes('tripadvisor.') || urlLower.includes('yellowpages.') || urlLower.includes('linktr.ee')) {
+          websiteStatus = 'DIRECTORY_ONLY';
+        } else {
+          websiteStatus = 'VALID_WEBSITE'; // Tentative, we will check if it's broken
+          
+          // Fetch website to get email and confirm status
+          try {
+            const resp = await new Promise(resolve => {
+              chrome.runtime.sendMessage({ action: 'fetchWebsite', url: websiteUrl }, resolve);
+            });
+            
+            if (resp && resp.success) {
+              const html = resp.html || '';
+              // Check for email
+              const emailMatch = html.match(/([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9_-]+)/i);
+              if (emailMatch) {
+                email = emailMatch[1];
+              }
+              // Check for instagram
+              const igMatch = html.match(/href=["'](https?:\/\/(?:www\.)?instagram\.com\/[^"']+)["']/i);
+              if (igMatch) {
+                instagram = igMatch[1];
+              }
+
+              // Very short HTML might mean DOMAIN_ONLY
+              if (html.length < 500) {
+                websiteStatus = 'DOMAIN_ONLY';
+              }
+            } else {
+              websiteStatus = 'BROKEN_WEBSITE';
+            }
+          } catch (err) {
+            websiteStatus = 'BROKEN_WEBSITE';
+          }
+        }
+      }
+
+      const leadBase = {
         name,
         rating,
         reviewsCount,
         category,
         address,
         phone,
-        link: fullUrl
+        link: fullUrl,
+        websiteUrl,
+        email,
+        instagram
+      };
+
+      const scoring = calculateScore(leadBase, websiteStatus);
+
+      // Only process VERIFIED/QUALIFIED. If it's LOW, the prompt says "saved in database but not processed further". We'll just save it to CSV with the Tier.
+      leads.push({
+        ...leadBase,
+        score: scoring.score,
+        tier: scoring.tier,
+        status: scoring.status,
+        qualificationReason: scoring.qualificationReason
       });
-    });
+    }
 
     // Check if new leads were found
     if (leads.length > startCount) {

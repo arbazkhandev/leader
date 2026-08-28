@@ -191,10 +191,17 @@ document.addEventListener('DOMContentLoaded', () => {
   function convertToCSV(data) {
     const headers = [
       'Name',
+      'Status',
+      'Tier',
+      'Score',
+      'Qualification Reason',
       'Rating',
       'Reviews Count',
       'Category',
       'Phone Number',
+      'Email',
+      'Instagram',
+      'Website URL',
       'Address',
       'Google Maps URL'
     ];
@@ -210,10 +217,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const rows = data.map(item => [
       item.name || '',
+      item.status || '',
+      item.tier || '',
+      item.score || '0',
+      item.qualificationReason || '',
       item.rating || '',
       item.reviewsCount || '',
       item.category || '',
       item.phone || '',
+      item.email || '',
+      item.instagram || '',
+      item.websiteUrl || '',
       item.address || '',
       item.link || ''
     ]);
