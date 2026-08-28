@@ -295,11 +295,24 @@ async function startScraping(defaultDelay) {
       let websiteUrl = '';
       const cardLinks = Array.from(card.querySelectorAll('a'));
       const webLinkEl = cardLinks.find(a => {
-        const h = a.getAttribute('href') || '';
-        return h.startsWith('http') && !h.includes('google.com/maps') && !h.includes('google.com/search');
+        const h = (a.getAttribute('href') || '').toLowerCase();
+        const text = a.textContent.trim().toLowerCase();
+        const dataValue = (a.getAttribute('data-value') || '').toLowerCase();
+        
+        // Find by text, data-value, or explicit external link
+        return text === 'website' || text.includes('website') || dataValue === 'website' || 
+               (h.startsWith('http') && !h.includes('google.com/maps') && !h.includes('google.com/search'));
       });
       if (webLinkEl) {
-        websiteUrl = webLinkEl.getAttribute('href');
+        let h = webLinkEl.getAttribute('href');
+        // Handle Google redirect URLs if any
+        if (h && h.includes('google.com/url?')) {
+          try {
+            const urlParams = new URLSearchParams(h.split('?')[1]);
+            h = urlParams.get('q') || urlParams.get('url') || h;
+          } catch (e) {}
+        }
+        websiteUrl = h;
       }
 
       let email = '';
@@ -330,8 +343,8 @@ async function startScraping(defaultDelay) {
               if (emailMatch) {
                 email = emailMatch[1];
               }
-              // Check for instagram
-              const igMatch = html.match(/href=["'](https?:\/\/(?:www\.)?instagram\.com\/[^"']+)["']/i);
+              // Check for instagram (broader match without requiring href quotes)
+              const igMatch = html.match(/(https?:\/\/(?:www\.)?instagram\.com\/[a-zA-Z0-9_.-]+)/i);
               if (igMatch) {
                 instagram = igMatch[1];
               }
