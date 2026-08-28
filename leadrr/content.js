@@ -159,6 +159,102 @@ function parseDetails(card, name) {
   return { category, address, phone };
 }
 
+// Clean and decode potential Google redirect URLs
+function cleanExtractedUrl(href) {
+  if (!href) return '';
+  if (href.includes('google.com/url?')) {
+    try {
+      const urlParams = new URLSearchParams(href.split('?')[1]);
+      return urlParams.get('q') || urlParams.get('url') || href;
+    } catch (e) {}
+  }
+  return href;
+}
+
+// Validate that a link is an actual business website and not an aggregator/booking link
+function isValidBusinessWebsite(urlStr) {
+  if (!urlStr || !urlStr.startsWith('http')) return false;
+  try {
+    const parsed = new URL(urlStr);
+    const host = parsed.hostname.toLowerCase();
+
+    // Ignore Google internal links
+    if (host.includes('google.') || host.includes('gstatic.') || host.includes('googleapis.') || host.includes('g.co') || host.includes('w3.org') || host.includes('schema.org')) {
+      return false;
+    }
+
+    // Ignore third party booking/ordering engines
+    const bookingPlatforms = [
+      'opentable.com', 'tablecheck.com', 'resy.com', 'sevenrooms.com',
+      'chownow.com', 'foodpanda.com', 'foodpanda.pk', 'ubereats.com',
+      'doordash.com', 'grubhub.com', 'deliveroo.com', 'zomato.com',
+      'talabat.com', 'careem.com'
+    ];
+    if (bookingPlatforms.some(b => host === b || host.endsWith('.' + b))) {
+      return false;
+    }
+
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+// Extract official Website link from Google Maps card element
+function extractWebsiteFromCard(card) {
+  const cardLinks = Array.from(card.querySelectorAll('a'));
+
+  // 1. Explicit Website Button check (aria-label, data-value, tooltip, text)
+  for (const a of cardLinks) {
+    const text = (a.textContent || '').trim().toLowerCase();
+    const dataVal = (a.getAttribute('data-value') || '').toLowerCase();
+    const aria = (a.getAttribute('aria-label') || '').toLowerCase();
+    const tooltip = (a.getAttribute('data-tooltip') || '').toLowerCase();
+
+    // Check if it's explicitly the Website button
+    const isWebsite = dataVal === 'website' || 
+                      aria.includes('website') || 
+                      tooltip.includes('website') || 
+                      text === 'website';
+
+    if (isWebsite) {
+      let href = a.getAttribute('href') || '';
+      let clean = cleanExtractedUrl(href);
+      if (clean && isValidBusinessWebsite(clean)) {
+        return clean;
+      }
+    }
+  }
+
+  // 2. Fallback check for external links on card while strictly excluding action buttons
+  for (const a of cardLinks) {
+    const href = a.getAttribute('href') || '';
+    const text = (a.textContent || '').trim().toLowerCase();
+    const aria = (a.getAttribute('aria-label') || '').toLowerCase();
+    const dataVal = (a.getAttribute('data-value') || '').toLowerCase();
+
+    // Skip booking, table reservations, directions, menus, delivery
+    const skipKeywords = ['order', 'book', 'reserve', 'menu', 'direction', 'share', 'save', 'call', 'table', 'delivery'];
+    if (skipKeywords.some(kw => text.includes(kw) || aria.includes(kw) || dataVal.includes(kw))) {
+      continue;
+    }
+
+    // Must not be a maps internal link
+    if (href.includes('/maps/place/') || href.includes('maps.google.') || href.includes('/maps/dir/')) {
+      continue;
+    }
+
+    if (href.startsWith('http') || href.includes('google.com/url?')) {
+      let clean = cleanExtractedUrl(href);
+      if (clean && isValidBusinessWebsite(clean)) {
+        return clean;
+      }
+    }
+  }
+
+  return '';
+}
+
 // Score and Tier calculation logic
 function calculateScore(lead, websiteStatus) {
   let score = 0;
@@ -291,38 +387,17 @@ async function startScraping(defaultDelay) {
       // Parse details
       const { category, address, phone } = parseDetails(card, name);
 
-      // Extract Website URL from card
-      let websiteUrl = '';
-      const cardLinks = Array.from(card.querySelectorAll('a'));
-      const webLinkEl = cardLinks.find(a => {
-        const h = (a.getAttribute('href') || '').toLowerCase();
-        const text = a.textContent.trim().toLowerCase();
-        const dataValue = (a.getAttribute('data-value') || '').toLowerCase();
-        
-        // Find by text, data-value, or explicit external link
-        return text === 'website' || text.includes('website') || dataValue === 'website' || 
-               (h.startsWith('http') && !h.includes('google.com/maps') && !h.includes('google.com/search'));
-      });
-      if (webLinkEl) {
-        let h = webLinkEl.getAttribute('href');
-        // Handle Google redirect URLs if any
-        if (h && h.includes('google.com/url?')) {
-          try {
-            const urlParams = new URLSearchParams(h.split('?')[1]);
-            h = urlParams.get('q') || urlParams.get('url') || h;
-          } catch (e) {}
-        }
-        websiteUrl = h;
-      }
+      // Extract Website URL from card (Strict detection to avoid Book Online / Delivery buttons)
+      let websiteUrl = extractWebsiteFromCard(card);
 
       let email = '';
       let instagram = '';
       let websiteStatus = 'NO_WEBSITE';
       
-      // If websiteUrl is empty, attempt to search Google
+      // If websiteUrl is empty, attempt to search Google for the official website
       if (!websiteUrl) {
         try {
-          const searchQuery = `${name} ${address || ''}`.trim();
+          const searchQuery = `${name} ${category || ''} ${address || ''}`.trim();
           const resp = await new Promise(resolve => {
             chrome.runtime.sendMessage({ action: 'searchGoogleForWebsite', query: searchQuery }, resolve);
           });
@@ -330,7 +405,7 @@ async function startScraping(defaultDelay) {
             websiteUrl = resp.finalUrl;
           }
           // Small delay to reduce rate limiting risk
-          await new Promise(r => setTimeout(r, 1500));
+          await new Promise(r => setTimeout(r, 1200));
         } catch (e) {}
       }
 
@@ -353,15 +428,26 @@ async function startScraping(defaultDelay) {
             
             if (resp && resp.success) {
               const html = resp.html || '';
-              // Check for email
-              const emailMatch = html.match(/([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9_-]+)/i);
-              if (emailMatch) {
-                email = emailMatch[1];
+
+              // Check for email (filter out fake matches like image@2x.png)
+              const emailMatches = html.matchAll(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/gi);
+              for (const m of emailMatches) {
+                const foundEmail = m[1];
+                const lower = foundEmail.toLowerCase();
+                if (!lower.endsWith('.png') && !lower.endsWith('.jpg') && !lower.endsWith('.jpeg') && !lower.endsWith('.webp') && !lower.endsWith('.svg') && !lower.includes('sentry') && !lower.includes('example.com') && !lower.includes('w3.org')) {
+                  email = foundEmail;
+                  break;
+                }
               }
-              // Check for instagram (broader match without requiring href quotes)
-              const igMatch = html.match(/(https?:\/\/(?:www\.)?instagram\.com\/[a-zA-Z0-9_.-]+)/i);
+
+              // Check for instagram
+              const igMatch = html.match(/https?:\/\/(?:www\.)?instagram\.com\/([a-zA-Z0-9_.-]{3,30})/i);
               if (igMatch) {
-                instagram = igMatch[1];
+                const username = igMatch[1];
+                const ignoredIg = ['p', 'explore', 'reel', 'reels', 'stories', 'accounts', 'about', 'legal', 'developer'];
+                if (!ignoredIg.includes(username.toLowerCase())) {
+                  instagram = `https://www.instagram.com/${username}/`;
+                }
               }
 
               // Very short HTML might mean DOMAIN_ONLY

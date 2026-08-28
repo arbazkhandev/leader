@@ -152,16 +152,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const ratingText = lead.rating ? `★ ${lead.rating} (${lead.reviewsCount})` : 'No rating';
       const phoneText = lead.phone ? `<span class="lead-phone">${lead.phone}</span>` : 'No phone';
+      const tierBadge = lead.tier ? `<span class="lead-rating-badge" style="background:#eef2ff;color:#4338ca;font-weight:600;margin-left:4px;">${lead.tier} (${lead.score || 0})</span>` : '';
 
       li.innerHTML = `
         <div class="lead-item-header">
           <span class="lead-name" title="${lead.name}">${lead.name}</span>
-          ${lead.rating ? `<span class="lead-rating-badge">${ratingText}</span>` : ''}
+          <div>
+            ${lead.rating ? `<span class="lead-rating-badge">${ratingText}</span>` : ''}
+            ${tierBadge}
+          </div>
         </div>
         <div class="lead-details">
           <span>${lead.category || 'Business'}</span>
           <span>•</span>
           ${phoneText}
+          ${lead.websiteUrl ? `<span>•</span> <a href="${lead.websiteUrl}" target="_blank" style="color:#2563eb;text-decoration:none;">Website</a>` : ''}
         </div>
       `;
       previewList.appendChild(li);
