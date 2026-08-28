@@ -318,6 +318,21 @@ async function startScraping(defaultDelay) {
       let email = '';
       let instagram = '';
       let websiteStatus = 'NO_WEBSITE';
+      
+      // If websiteUrl is empty, attempt to search Google
+      if (!websiteUrl) {
+        try {
+          const searchQuery = `${name} ${address || ''}`.trim();
+          const resp = await new Promise(resolve => {
+            chrome.runtime.sendMessage({ action: 'searchGoogleForWebsite', query: searchQuery }, resolve);
+          });
+          if (resp && resp.success && resp.finalUrl) {
+            websiteUrl = resp.finalUrl;
+          }
+          // Small delay to reduce rate limiting risk
+          await new Promise(r => setTimeout(r, 1500));
+        } catch (e) {}
+      }
 
       if (websiteUrl) {
         // Evaluate website URL based on domain
