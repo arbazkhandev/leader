@@ -153,6 +153,9 @@ document.addEventListener('DOMContentLoaded', () => {
       const ratingText = lead.rating ? `★ ${lead.rating} (${lead.reviewsCount})` : 'No rating';
       const phoneText = lead.phone ? `<span class="lead-phone">${lead.phone}</span>` : 'No phone';
       const tierBadge = lead.tier ? `<span class="lead-rating-badge" style="background:#eef2ff;color:#4338ca;font-weight:600;margin-left:4px;">${lead.tier} (${lead.score || 0})</span>` : '';
+      const websiteDisplay = lead.websiteUrl 
+        ? `<a href="${lead.websiteUrl}" target="_blank" style="color:#2563eb;text-decoration:none;font-weight:500;">Website</a>` 
+        : `<span style="color:#ef4444;font-size:11px;font-weight:500;">No Website</span>`;
 
       li.innerHTML = `
         <div class="lead-item-header">
@@ -166,7 +169,8 @@ document.addEventListener('DOMContentLoaded', () => {
           <span>${lead.category || 'Business'}</span>
           <span>•</span>
           ${phoneText}
-          ${lead.websiteUrl ? `<span>•</span> <a href="${lead.websiteUrl}" target="_blank" style="color:#2563eb;text-decoration:none;">Website</a>` : ''}
+          <span>•</span>
+          ${websiteDisplay}
         </div>
       `;
       previewList.appendChild(li);
@@ -199,6 +203,7 @@ document.addEventListener('DOMContentLoaded', () => {
       'Status',
       'Tier',
       'Score',
+      'Website Status',
       'Qualification Reason',
       'Rating',
       'Reviews Count',
@@ -225,6 +230,7 @@ document.addEventListener('DOMContentLoaded', () => {
       item.status || '',
       item.tier || '',
       item.score || '0',
+      item.websiteStatus || (item.websiteUrl ? 'VALID_WEBSITE' : 'NO_WEBSITE'),
       item.qualificationReason || '',
       item.rating || '',
       item.reviewsCount || '',

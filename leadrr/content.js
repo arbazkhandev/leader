@@ -77,12 +77,11 @@ function getCardContainer(link) {
   return card || link;
 }
 
-// Extract and parse details (Category, Address, Phone, Website) from card DOM
+// Extract and parse details (Category, Address, Phone) from card DOM
 function parseDetails(card, name) {
   let category = '';
   let address = '';
   let phone = '';
-  let detectedDomain = '';
 
   const elements = card.querySelectorAll('div, span');
   const detailLines = [];
@@ -116,19 +115,10 @@ function parseDetails(card, name) {
   const phoneRegex = /(?:\+?\d{1,3}[-.\s]?)?\(?\d{2,4}\)?[-.\s]?\d{3,4}[-.\s]?\d{3,4}/;
   const priceRegex = /^[\$\£\€\¥\₹\s]+$/;
   const hoursKeywords = ['Open', 'Closed', 'Closes', 'Opens', '24 hours', 'pm', 'am', 'PM', 'AM', 'Daily', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-  const domainRegex = /^(?:https?:\/\/)?(?:www\.)?([a-zA-Z0-9-]+\.[a-zA-Z]{2,}(?:\/[^\s]*)?)$/i;
 
   tokens.forEach(token => {
     if (priceRegex.test(token)) return;
     if (hoursKeywords.some(kw => token.includes(kw))) return;
-
-    // Check if token is a domain/website URL
-    if (domainRegex.test(token) && !token.includes('@') && !token.includes('google.') && isValidBusinessWebsite(token.startsWith('http') ? token : `https://${token}`)) {
-      if (!detectedDomain) {
-        detectedDomain = token.startsWith('http') ? token : `https://${token}`;
-      }
-      return;
-    }
 
     if (phoneRegex.test(token)) {
       const match = token.match(phoneRegex);
@@ -153,7 +143,7 @@ function parseDetails(card, name) {
     }
   });
 
-  // Address fallback: find any remaining token that isn't category or phone or domain
+  // Address fallback: find any remaining token that isn't category or phone
   if (!address) {
     const candidate = tokens.find(token => {
       if (token === category || token === phone) return false;
@@ -161,36 +151,53 @@ function parseDetails(card, name) {
       if (hoursKeywords.some(kw => token.includes(kw))) return false;
       if (phoneRegex.test(token)) return false;
       if (/^\d\.\d$/.test(token) || /^\(\d+\)$/.test(token)) return false;
-      if (domainRegex.test(token)) return false;
       return token.length > 5;
     });
     if (candidate) address = candidate;
   }
 
-  return { category, address, phone, detectedDomain };
+  return { category, address, phone };
 }
 
 // Clean and decode potential Google redirect URLs
 function cleanExtractedUrl(href) {
   if (!href) return '';
-  if (href.includes('google.com/url?') || href.includes('google.') && href.includes('/url?')) {
+  if (href.includes('google.com/url?') || (href.includes('google.') && href.includes('/url?'))) {
     try {
       const urlParams = new URLSearchParams(href.split('?')[1]);
-      return urlParams.get('q') || urlParams.get('url') || href;
+      const extracted = urlParams.get('q') || urlParams.get('url');
+      if (extracted) return extracted;
     } catch (e) {}
   }
   return href;
 }
 
-// Validate that a link is an actual business website and not an aggregator/booking link
+// Validate that a link is an actual business website and not an aggregator/booking/internal link
 function isValidBusinessWebsite(urlStr) {
-  if (!urlStr || !urlStr.startsWith('http')) return false;
+  if (!urlStr || typeof urlStr !== 'string') return false;
+  const trimmed = urlStr.trim();
+  if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) return false;
+
   try {
-    const parsed = new URL(urlStr);
+    const parsed = new URL(trimmed);
     const host = parsed.hostname.toLowerCase();
 
-    // Ignore Google internal links
-    if (host.includes('google.') || host.includes('gstatic.') || host.includes('googleapis.') || host.includes('g.co') || host.includes('w3.org') || host.includes('schema.org')) {
+    // Must have a valid domain dot
+    if (!host.includes('.') || host.startsWith('.') || host.endsWith('.')) {
+      return false;
+    }
+
+    // Ignore Google internal links & services
+    if (
+      host.includes('google.') || 
+      host.includes('gstatic.') || 
+      host.includes('googleapis.') || 
+      host.includes('g.co') || 
+      host.includes('goo.gl') ||
+      host.includes('ggpht.com') ||
+      host.includes('w3.org') || 
+      host.includes('schema.org')
+    ) {
       return false;
     }
 
@@ -199,7 +206,8 @@ function isValidBusinessWebsite(urlStr) {
       'opentable.com', 'tablecheck.com', 'resy.com', 'sevenrooms.com',
       'chownow.com', 'foodpanda.com', 'foodpanda.pk', 'ubereats.com',
       'doordash.com', 'grubhub.com', 'deliveroo.com', 'zomato.com',
-      'talabat.com', 'careem.com', 'daraz.pk', 'olx.com', 'pakwheels.com'
+      'talabat.com', 'careem.com', 'daraz.pk', 'olx.com', 'pakwheels.com',
+      'swiggy.com', 'justdial.com', 'indiamart.com', 'trustpilot.com'
     ];
     if (bookingPlatforms.some(b => host === b || host.endsWith('.' + b))) {
       return false;
@@ -211,85 +219,66 @@ function isValidBusinessWebsite(urlStr) {
   }
 }
 
-// Extract official Website link from Google Maps card element
+// Extract official Website link strictly from Google Maps card Website button
 function extractWebsiteFromCard(card) {
-  // 1. Check data-item-id="authority" (Standard Google Maps Authority Link)
-  const authorityLink = card.querySelector('a[data-item-id="authority"], a[data-attribution-url]');
-  if (authorityLink) {
-    let href = authorityLink.getAttribute('href') || authorityLink.getAttribute('data-attribution-url') || '';
-    let clean = cleanExtractedUrl(href);
-    if (clean && isValidBusinessWebsite(clean)) {
-      return clean;
+  if (!card) return '';
+
+  // 1. Check Google Maps authoritative Website button selectors
+  const authoritySelectors = [
+    'a[data-item-id="authority"]',
+    'a[data-value="Website"]',
+    'a[data-value="website"]',
+    'a[aria-label^="Website" i]',
+    'a[aria-label*="Website:" i]',
+    'a[aria-label*="Website" i]',
+    'a[data-tooltip*="website" i]',
+    'a[aria-label*="sitio web" i]',
+    'a[aria-label*="site web" i]',
+    'a[aria-label*="webseite" i]'
+  ];
+
+  for (const selector of authoritySelectors) {
+    const el = card.querySelector(selector);
+    if (el) {
+      const rawHref = el.getAttribute('href') || el.getAttribute('data-attribution-url') || '';
+      const clean = cleanExtractedUrl(rawHref);
+      if (clean && isValidBusinessWebsite(clean)) {
+        return clean;
+      }
     }
   }
 
+  // 2. Explicit Website check on anchor elements inside card
   const cardLinks = Array.from(card.querySelectorAll('a'));
-
-  // 2. Explicit Website Button check (aria-label, data-value, tooltip, text)
   for (const a of cardLinks) {
     const text = (a.textContent || '').trim().toLowerCase();
-    const dataVal = (a.getAttribute('data-value') || '').toLowerCase();
     const aria = (a.getAttribute('aria-label') || '').toLowerCase();
     const tooltip = (a.getAttribute('data-tooltip') || '').toLowerCase();
+    const dataVal = (a.getAttribute('data-value') || '').toLowerCase();
     const itemId = (a.getAttribute('data-item-id') || '').toLowerCase();
 
-    // Check if it's explicitly the Website button
-    const isWebsite = dataVal === 'website' || 
-                      itemId === 'authority' ||
-                      aria.includes('website') || 
-                      tooltip.includes('website') || 
-                      text === 'website';
+    const isExplicitWebsite = 
+      itemId === 'authority' ||
+      dataVal === 'website' ||
+      text === 'website' ||
+      text === 'site' ||
+      text === 'sitio web' ||
+      tooltip === 'open website' ||
+      tooltip === 'website' ||
+      aria.startsWith('website:') ||
+      aria === 'website' ||
+      aria.includes('open website');
 
-    if (isWebsite) {
-      let href = a.getAttribute('href') || '';
-      let clean = cleanExtractedUrl(href);
+    if (isExplicitWebsite) {
+      const rawHref = a.getAttribute('href') || a.getAttribute('data-attribution-url') || '';
+      const clean = cleanExtractedUrl(rawHref);
       if (clean && isValidBusinessWebsite(clean)) {
         return clean;
       }
     }
   }
 
-  // 3. Fallback check for external links on card while strictly excluding action buttons
-  for (const a of cardLinks) {
-    const href = a.getAttribute('href') || '';
-    const text = (a.textContent || '').trim().toLowerCase();
-    const aria = (a.getAttribute('aria-label') || '').toLowerCase();
-    const dataVal = (a.getAttribute('data-value') || '').toLowerCase();
-
-    // Skip booking, table reservations, directions, menus, delivery
-    const skipKeywords = ['order', 'book', 'reserve', 'menu', 'direction', 'share', 'save', 'call', 'table', 'delivery'];
-    if (skipKeywords.some(kw => text.includes(kw) || aria.includes(kw) || dataVal.includes(kw))) {
-      continue;
-    }
-
-    // Must not be a maps internal link
-    if (href.includes('/maps/place/') || href.includes('maps.google.') || href.includes('/maps/dir/')) {
-      continue;
-    }
-
-    if (href.startsWith('http') || href.includes('google.com/url?')) {
-      let clean = cleanExtractedUrl(href);
-      if (clean && isValidBusinessWebsite(clean)) {
-        return clean;
-      }
-    }
-  }
-
-  // 4. Check for domain patterns in card text
-  const textSpans = card.querySelectorAll('span, div');
-  const domainPattern = /(?:https?:\/\/)?(?:www\.)?([a-zA-Z0-9-]+\.[a-zA-Z]{2,}(?:\/[^\s]*)?)/i;
-  for (const span of textSpans) {
-    if (span.children.length === 0) {
-      const txt = span.textContent.trim();
-      if (domainPattern.test(txt) && !txt.includes('@') && !txt.includes('google.') && txt.length < 60) {
-        const full = txt.startsWith('http') ? txt : `https://${txt}`;
-        if (isValidBusinessWebsite(full)) {
-          return full;
-        }
-      }
-    }
-  }
-
+  // No official website button on this listing
   return '';
 }
 
@@ -310,15 +299,15 @@ function calculateScore(lead, websiteStatus) {
 
   // Website logic
   if (websiteStatus === 'NO_WEBSITE') {
-    score += 40; reasons.push('NO_WEBSITE (40)');
+    score += 40; reasons.push('NO_WEBSITE (+40)');
   } else if (websiteStatus === 'BROKEN_WEBSITE') {
-    score += 35; reasons.push('BROKEN_WEBSITE (35)');
+    score += 35; reasons.push('BROKEN_WEBSITE (+35)');
   } else if (websiteStatus === 'SOCIAL_ONLY') {
-    score += 30; reasons.push('SOCIAL_ONLY (30)');
+    score += 30; reasons.push('SOCIAL_ONLY (+30)');
   } else if (websiteStatus === 'DIRECTORY_ONLY') {
-    score += 28; reasons.push('DIRECTORY_ONLY (28)');
+    score += 28; reasons.push('DIRECTORY_ONLY (+28)');
   } else if (websiteStatus === 'DOMAIN_ONLY') {
-    score += 20; reasons.push('DOMAIN_ONLY (20)');
+    score += 20; reasons.push('DOMAIN_ONLY (+20)');
   } else if (websiteStatus === 'VALID_WEBSITE') {
     score += 0; reasons.push('VALID_WEBSITE (0)');
   }
@@ -432,54 +421,33 @@ async function startScraping(defaultDelay) {
         if (countMatch) reviewsCount = countMatch[1];
       }
 
-      // Parse details (Category, Address, Phone, Domain from text)
-      const { category, address, phone, detectedDomain } = parseDetails(card, name);
+      // Parse details (Category, Address, Phone)
+      const { category, address, phone } = parseDetails(card, name);
 
-      // 1. Extract Website URL directly from card element or parsed domain
-      let websiteUrl = extractWebsiteFromCard(card) || detectedDomain || '';
-
+      // 1. Extract Website URL strictly from the Google Maps listing's Website button
+      const rawWebsite = extractWebsiteFromCard(card);
+      let websiteUrl = rawWebsite || '';
       let email = '';
       let instagram = '';
       let websiteStatus = 'NO_WEBSITE';
-      
-      // 2. If websiteUrl is empty on the card, perform online search resolution
-      if (!websiteUrl) {
-        try {
-          const cleanName = cleanBusinessNameForSearch(name);
-          const searchQuery = `${cleanName} ${category || ''} ${address || ''}`.trim();
-          
-          const resp = await new Promise(resolve => {
-            chrome.runtime.sendMessage({ action: 'searchGoogleForWebsite', query: searchQuery }, resolve);
-          });
 
-          if (resp && resp.success && resp.finalUrl) {
-            websiteUrl = resp.finalUrl;
-            if (resp.type === 'SOCIAL') {
-              websiteStatus = 'SOCIAL_ONLY';
-              if (websiteUrl.toLowerCase().includes('instagram.com')) {
-                instagram = websiteUrl;
-              }
-            } else if (resp.type === 'DIRECTORY') {
-              websiteStatus = 'DIRECTORY_ONLY';
-            } else {
-              websiteStatus = 'VALID_WEBSITE';
-            }
-          }
-        } catch (e) {}
-      }
-
-      // 3. If a website URL was discovered, evaluate and verify its status
+      // 2. If a website button exists, evaluate and verify its status
       if (websiteUrl) {
         const urlLower = websiteUrl.toLowerCase();
-        if (urlLower.includes('facebook.com') || urlLower.includes('instagram.com') || urlLower.includes('twitter.com') || urlLower.includes('linkedin.com') || urlLower.includes('tiktok.com')) {
+        
+        // Social platforms
+        if (urlLower.includes('facebook.com') || urlLower.includes('instagram.com') || urlLower.includes('twitter.com') || urlLower.includes('x.com') || urlLower.includes('linkedin.com') || urlLower.includes('tiktok.com') || urlLower.includes('pinterest.com') || urlLower.includes('youtube.com')) {
           websiteStatus = 'SOCIAL_ONLY';
-          if (urlLower.includes('instagram.com')) instagram = websiteUrl;
-        } else if (urlLower.includes('yelp.') || urlLower.includes('tripadvisor.') || urlLower.includes('yellowpages.') || urlLower.includes('linktr.ee')) {
+          if (urlLower.includes('instagram.com')) {
+            instagram = websiteUrl;
+          }
+        } 
+        // Directories & aggregators
+        else if (urlLower.includes('yelp.') || urlLower.includes('tripadvisor.') || urlLower.includes('yellowpages.') || urlLower.includes('linktr.ee') || urlLower.includes('foursquare.com')) {
           websiteStatus = 'DIRECTORY_ONLY';
-        } else {
-          websiteStatus = 'VALID_WEBSITE'; // Tentative, check if live
-          
-          // Fetch website to extract email/socials and confirm it's online
+        } 
+        // Independent business website: verify online status
+        else {
           try {
             const resp = await new Promise(resolve => {
               chrome.runtime.sendMessage({ action: 'fetchWebsite', url: websiteUrl }, resolve);
@@ -488,18 +456,18 @@ async function startScraping(defaultDelay) {
             if (resp && resp.success) {
               const html = resp.html || '';
 
-              // Check for email (filter out fake asset matches like icon@2x.png)
+              // Extract clean email (filter false positives like sentry, example, image names)
               const emailMatches = html.matchAll(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/gi);
               for (const m of emailMatches) {
                 const foundEmail = m[1];
                 const lower = foundEmail.toLowerCase();
-                if (!lower.endsWith('.png') && !lower.endsWith('.jpg') && !lower.endsWith('.jpeg') && !lower.endsWith('.webp') && !lower.endsWith('.svg') && !lower.includes('sentry') && !lower.includes('example.com') && !lower.includes('w3.org')) {
+                if (!lower.endsWith('.png') && !lower.endsWith('.jpg') && !lower.endsWith('.jpeg') && !lower.endsWith('.webp') && !lower.endsWith('.svg') && !lower.includes('sentry') && !lower.includes('example.com') && !lower.includes('w3.org') && !lower.includes('domain.com')) {
                   email = foundEmail;
                   break;
                 }
               }
 
-              // Check for instagram link on the business website
+              // Extract Instagram profile link if embedded on website
               const igMatch = html.match(/https?:\/\/(?:www\.)?instagram\.com\/([a-zA-Z0-9_.-]{3,30})/i);
               if (igMatch && !instagram) {
                 const username = igMatch[1];
@@ -509,18 +477,23 @@ async function startScraping(defaultDelay) {
                 }
               }
 
-              // Very short HTML might mean empty domain placeholder
-              if (html.length < 300) {
+              // Placeholder or parked domain detection
+              if (html.length < 250) {
                 websiteStatus = 'DOMAIN_ONLY';
+              } else {
+                websiteStatus = 'VALID_WEBSITE';
               }
             } else {
-              // Website responded with 404/500 or unreachable
+              // Website unreachable or returned 404/500
               websiteStatus = 'BROKEN_WEBSITE';
             }
           } catch (err) {
             websiteStatus = 'BROKEN_WEBSITE';
           }
         }
+      } else {
+        // Business has NO website listed on Google Maps
+        websiteStatus = 'NO_WEBSITE';
       }
 
       const leadBase = {
@@ -532,6 +505,7 @@ async function startScraping(defaultDelay) {
         phone,
         link: fullUrl,
         websiteUrl,
+        websiteStatus,
         email,
         instagram
       };
